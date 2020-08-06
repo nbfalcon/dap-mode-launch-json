@@ -1,4 +1,4 @@
-;; -*- mode: emacs-lisp; lexical-binding: t -*-
+;; dap-mode-launch-json.el --- support launch.json -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2020 Nikita Bloshchanevich
 
@@ -22,6 +22,9 @@
 (require 'lsp)
 (require 'cl-lib)
 (require 'f)
+
+;;; Commentary:
+;; Extend dap-mode with support for launch.json files
 
 ;;; Code:
 
@@ -52,20 +55,20 @@ JSON must have been acquired with `dap--project-get-launch-json'."
 (defun dap--project-project-basename (&optional dir)
   "Return the name of the project root directory.
 Starts the project-root search at DIR."
-    (file-name-nondirectory (directory-file-name (lsp-workspace-root))))
+    (file-name-nondirectory (directory-file-name (lsp-workspace-root dir))))
 
 (defun dap--project-relative-file (&optional file dir)
   "Return the path to FILE relative to the project root.
 The search for the project root starts at DIR. FILE defaults to
 variable `buffer-file-name'."
-    (f-relative (or file buffer-file-name) (lsp-workspace-root)))
+    (f-relative (or file buffer-file-name) (lsp-workspace-root dir)))
 
 (defun dap--project-relative-dirname (&optional file dir)
   "Return the path to the directory of file relative to the project root.
 The search for the project root starts at DIR. FILE defaults to
 variable `buffer-file-name'"
-  (project-relative-file (file-name-directory (or file buffer-file-name))
-                            dir))
+  (dap--project-relative-file (file-name-directory (or file buffer-file-name))
+                              dir))
 
 (defun dap--buffer-basename ()
   "Return the name of the current buffer's file without its directory."
@@ -73,7 +76,7 @@ variable `buffer-file-name'"
 
 (defun dap--buffer-basename-sans-extension ()
   "Same as `dap--buffer-basename', but without the extension."
-  (file-name-sans-extension (buffer-basename)))
+  (file-name-sans-extension (dap--buffer-basename)))
 
 (defun dap--buffer-extension ()
   "Return the extension of the buffer's file with a leading dot.
@@ -99,14 +102,20 @@ If no text is selected, return the empty string."
   ;; (`buffer-substring-no-properties') will yield "", as it should.
   (buffer-substring-no-properties (mark) (point)))
 
-(defun dap--warn-nil (text)
+(defun dap--launch-json-warn-nil (text)
+  "Issue a warning related to the launch.json file containing TEXT.
+Always return nil."
   (message (concat "warning: launch.json: " text))
   nil)
 
 (defun dap--warn-unknown-envvar (var)
-  (dap--warn-nil (format "no such environment variable '%s'" var)))
+  "Warn, related to launch.json, that VAR is an unknown environment variable.
+Always return nil."
+  (dap--launch-json-warn-nil (format "no such environment variable '%s'" var)))
 
 (defun dap--launch-json-getenv (var)
+  "Return the environment variable in matched string VAR.
+Only for use in `dap-launch-json-variables'."
   (let ((envvar (match-string 1 var)))
     (or (getenv envvar) (dap--warn-unknown-envvar envvar) "")))
 
@@ -133,10 +142,10 @@ If no text is selected, return the empty string."
     ;; ("execPath")
     ;; ("defaultBuildTask")
     )
-  "This variable is a list of dotted pairs (regex . value) that
-is iterated from the top to the bottom when expanding variables
-in the strings of the selected launch configuration from
-launch.json or in `dap-expand-variable'.
+  "Alist of (REGEX . VALUE) pairs listing variables usable in launch.json files.
+This list is iterated from the top to bottom when expanding
+variables in the strings of the selected launch configuration
+from launch.json or in `dap-expand-variable'.
 
 When a REGEX matches (`string-match'), its corresponding VALUE is
 evaluated as follows: if it is a function (or a quoted lambda),
@@ -144,7 +153,7 @@ that function is called with `funcall', and its result, which
 must be a string, is used in place of the variable. If you used
 capture groups in REGEX, the function you specified in VALUE is
 called with the variable as its only argument. This way, you can
-use string-match to get the capture groups. If, however, REGEX
+use `string-match' to get the capture groups. If, however, REGEX
 does not contain capture groups, your function is called without
 any arguments. Otherwise, if it is a symbol, the symbol's value
 is used the same way. Lastly, if it is a string, the string is
@@ -155,15 +164,22 @@ See `dap--launch-json-getenv' for an example on how to use
 capture groups in REGEX.")
 
 (defun dap--launch-json-eval-poly-type (value var)
+  "Get the value from VALUE depending on its type.
+If it is a function, and VAR is not nil, call VALUE and pass VAR as an argument.
+If it is a symbol, return its value.
+Otherwise, return VALUE"
   (cond ((and var (functionp value)) (funcall value var))
         ((functionp value) (funcall value))
         ((symbolp value) (symbol-value value))
         (t value)))
 
 (defun dap--warn-var-nil (var)
-  (dap--warn-nil (format "variable '%s' is unknown and was ignored" var)))
+  "Warn that VAR is an unknown launch.json variable."
+  (dap--launch-json-warn-nil
+   (format "variable '%s' is unknown and was ignored" var)))
 
 (defun dap-expand-variable (var)
+  "Expand variable VAR using `dap--launch-json-variables'."
   (catch 'ret
     (save-match-data
       (dolist (var-pair dap-launch-json-variables)
@@ -181,6 +197,8 @@ capture groups in REGEX.")
     nil))
 
 (defun dap-expand-variables-in-string (s)
+  "Expand all launch.json variables of the from ${variable} in S.
+Return the result."
   (let ((old-buffer (current-buffer)))
     (with-temp-buffer
       (insert s)
@@ -196,6 +214,8 @@ capture groups in REGEX.")
       (buffer-string))))
 
 (defun dap--launch-json-expand-vars (conf)
+  "Non-destructively expand all variables in all strings of CONF.
+CONF is regular dap-mode launch configuration. Return the result."
   (cond ((listp conf)
          (apply #'nconc (cl-loop for (k v) on conf by #'cddr collect
                                  (list k (dap--launch-json-expand-vars v)))))
@@ -203,6 +223,7 @@ capture groups in REGEX.")
         (t conf)))
 
 (defun dap--launch-json-prompt-configuration ()
+  "Prompt the user to select a launch configuration from the launch.json file."
   (dap--completing-read "Select configuration: "
                         (dap--project-parse-launch-json)
                         #'dap--configuration-get-name))
