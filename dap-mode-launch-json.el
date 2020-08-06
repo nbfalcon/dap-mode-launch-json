@@ -21,6 +21,7 @@
 (require 'dap-mode)
 (require 'lsp)
 (require 'cl-lib)
+(require 'f)
 
 ;;; Code:
 
@@ -57,7 +58,7 @@ Starts the project-root search at DIR."
   "Return the path to FILE relative to the project root.
 The search for the project root starts at DIR. FILE defaults to
 variable `buffer-file-name'."
-    (file-relative-name (or file buffer-file-name) (lsp-workspace-root)))
+    (f-relative (or file buffer-file-name) (lsp-workspace-root)))
 
 (defun dap--project-relative-dirname (&optional file dir)
   "Return the path to the directory of file relative to the project root.
