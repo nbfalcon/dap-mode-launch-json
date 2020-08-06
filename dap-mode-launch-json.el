@@ -107,9 +107,9 @@ If no text is selected, return the empty string."
 (defun dap--warn-unknown-envvar (var)
   (dap--warn-nil (format "no such environment variable '%s'" var)))
 
-(defun dap--launch-json-getenv ()
-  (let ((var (match-string 1)))
-   (or (getenv var) (dap--warn-unknown-envvar var) "")))
+(defun dap--launch-json-getenv (var)
+  (let ((envvar (match-string 1 var)))
+    (or (getenv envvar) (dap--warn-unknown-envvar envvar) "")))
 
 (defvar dap--launch-json-variables
   ;; list taken from https://code.visualstudio.com/docs/editor/variables-reference
@@ -139,23 +139,25 @@ is iterated from the top to the bottom when expanding variables
 in the strings of the selected launch configuration from
 launch.json or in `dap-expand-variable'.
 
-When a regex matches (`string-match'), value is evaluated as
-follows: if it is a function (or a quoted lambda), that function
-is called with no arguments using `funcall', and its result,
-which must be a string, is used in place of the variable.
-Otherwise, if it is a symbol, the symbol's value is used the same
-way. Lastly, if it is a string, the string is used as a
-replacement. If no regex matches, the empty string is used as a
-replacement and a warning is issued.
+When a REGEX matches (`string-match'), its corresponding VALUE is
+evaluated as follows: if it is a function (or a quoted lambda),
+that function is called with `funcall', and its result, which
+must be a string, is used in place of the variable. If you used
+capture groups in REGEX, the function you specified in VALUE is
+called with the variable as its only argument. This way, you can
+use string-match to get the capture groups. If, however, REGEX
+does not contain capture groups, your function is called without
+any arguments. Otherwise, if it is a symbol, the symbol's value
+is used the same way. Lastly, if it is a string, the string is
+used as a replacement. If no regex matches, the empty string is
+used as a replacement and a warning is issued.
 
-Note that the regex can contain capture groups, because, after
-matching, the regex is searched in a temporary buffer, so that
-you can use `match-string' as if it were accessing match-data in
-a buffer (i.e. without a string argument). See
-`dap--launch-json-getenv' for an example.")
+See `dap--launch-json-getenv' for an example on how to use
+capture groups in REGEX.")
 
-(defun dap--launch-json-eval-poly-type (value)
-  (cond ((functionp value) (funcall value))
+(defun dap--launch-json-eval-poly-type (value var)
+  (cond ((and var (functionp value)) (funcall value var))
+        ((functionp value) (funcall value))
         ((symbolp value) (symbol-value value))
         (t value)))
 
@@ -167,17 +169,15 @@ a buffer (i.e. without a string argument). See
     (save-match-data
       (dolist (var-pair dap--launch-json-variables)
         (when (string-match (car var-pair) var)
-          ;; since there is no way to communicate var to the match function, the
-          ;; user cannot pass var to string-match to decompose var by her regex.
-          ;; As such, we must create a temporary buffer, insert the string and
-          ;; to a re-search so that (string-match) returns the correct results.
-          (with-temp-buffer
-            (insert var)
-            (goto-char (point-min))
-
-            (re-search-forward (car var-pair))
-            (throw 'ret (or (dap--launch-json-eval-poly-type (cdr var-pair))
-                            (dap--warn-var-nil var) ""))))))
+          (throw 'ret
+                 (or
+                  (dap--launch-json-eval-poly-type
+                   (cdr var-pair)
+                   (if (= (length (match-data)) 2) ;; no capture groups
+                       nil
+                     var))
+                  (dap--warn-var-nil var)
+                  "")))))
     nil))
 
 (defun dap-expand-variables-in-string (s)
