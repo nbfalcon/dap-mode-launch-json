@@ -206,11 +206,14 @@ capture groups in REGEX.")
                         (dap--project-parse-launch-json)
                         #'dap--configuration-get-name))
 
+(defun dap--acquire-launch-json ()
+  "Prompt the user for a launch configuration and expand its variables."
+  (dap--launch-json-expand-vars (dap--launch-json-prompt-configuration)))
+
 (defun dap-debug-launch-json ()
   "Read the project's launch.json and ask the user for a launch configuration."
   (interactive)
-  (dap-debug (dap--launch-json-expand-vars
-              (dap--launch-json-prompt-configuration))))
+  (dap-debug (dap--acquire-launch-json)))
 
 (provide 'dap-mode-launch-json)
 ;;; dap-mode-launch-json.el ends here
