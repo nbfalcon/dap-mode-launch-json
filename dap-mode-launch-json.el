@@ -19,64 +19,62 @@
 ;; along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 (require 'dap-mode)
+(require 'lsp)
 (require 'cl-lib)
-(require 'projectile)
 
 ;;; Code:
 
-(defun dap--projectile-find-launch-json ()
+(defun dap--project-find-launch-json ()
   "Return the location of the launch.json file in the current project."
-  (when-let ((project (projectile-ensure-project (projectile-project-root))))
-    (concat project "launch.json")))
+  (when-let ((project (lsp-workspace-root)))
+    (concat project "/launch.json")))
 
-(defun dap--projectile-get-launch-json ()
+(defun dap--project-get-launch-json ()
   "Parse the project's launch.json as json data and return the result."
-  (when-let ((launch-json (dap--projectile-find-launch-json))
+  (when-let ((launch-json (dap--project-find-launch-json))
              (json-object-type 'plist))
     (json-read-file launch-json)))
 
 (defun dap--parse-launch-json (json)
   "Return a list of all launch configurations in JSON.
-JSON must have been acquired with `dap--projectile-get-launch-json'."
+JSON must have been acquired with `dap--project-get-launch-json'."
   (or (plist-get json :configurations) (list json)))
 
-(defun dap--projectile-parse-launch-json ()
+(defun dap--project-parse-launch-json ()
   "Return a list of all launch configurations for the current project."
-  (dap--parse-launch-json (dap--projectile-get-launch-json)))
+  (dap--parse-launch-json (dap--project-get-launch-json)))
 
 (defun dap--configuration-get-name (conf)
 "Return the name of launch configuration CONF."
   (plist-get conf :name))
 
-(defun projectile-project-basename (&optional dir)
+(defun dap--project-project-basename (&optional dir)
   "Return the name of the project root directory.
 Starts the project-root search at DIR."
-  (let ((project (projectile-ensure-project (projectile-project-root dir))))
-    (file-name-nondirectory (directory-file-name project))))
+    (file-name-nondirectory (directory-file-name (lsp-workspace-root))))
 
-(defun projectile-relative-file (&optional file dir)
+(defun dap--project-relative-file (&optional file dir)
   "Return the path to FILE relative to the project root.
 The search for the project root starts at DIR. FILE defaults to
 variable `buffer-file-name'."
-  (let ((project (projectile-ensure-project (projectile-project-root dir))))
-    (file-relative-name (or file buffer-file-name) project)))
+    (file-relative-name (or file buffer-file-name) (lsp-workspace-root)))
 
-(defun projectile-relative-dirname (&optional file dir)
+(defun dap--project-relative-dirname (&optional file dir)
   "Return the path to the directory of file relative to the project root.
 The search for the project root starts at DIR. FILE defaults to
 variable `buffer-file-name'"
-  (projectile-relative-file (file-name-directory (or file buffer-file-name))
+  (project-relative-file (file-name-directory (or file buffer-file-name))
                             dir))
 
-(defun buffer-basename ()
+(defun dap--buffer-basename ()
   "Return the name of the current buffer's file without its directory."
   (file-name-nondirectory buffer-file-name))
 
-(defun buffer-basename-sans-extension ()
-  "Same as `buffer-basename', but without the extension."
+(defun dap--buffer-basename-sans-extension ()
+  "Same as `dap--buffer-basename', but without the extension."
   (file-name-sans-extension (buffer-basename)))
 
-(defun buffer-extension ()
+(defun dap--buffer-extension ()
   "Return the extension of the buffer's file with a leading dot.
 If there is either no file associated with the current buffer or
 if that file has no extension, return the empty string."
@@ -85,15 +83,15 @@ if that file has no extension, return the empty string."
       (concat "." ext)
     ""))
 
-(defun buffer-dirname ()
+(defun dap--buffer-dirname ()
   "Return the directory the buffer's file is in."
   (file-name-directory buffer-file-name))
 
-(defun buffer-current-line ()
+(defun dap--buffer-current-line ()
   "Return the line the cursor is on in the current buffer."
   (number-to-string (line-number-at-pos)))
 
-(defun buffer-selected-text ()
+(defun dap--buffer-selected-text ()
   "Return the text selected in the current buffer.
 If no text is selected, return the empty string."
   ;; Cannot fail, as if there is no mark, (mark) and (point) will be equal, and
@@ -113,16 +111,16 @@ If no text is selected, return the empty string."
 
 (defvar dap-launch-json-variables
   ;; list taken from https://code.visualstudio.com/docs/editor/variables-reference
-  '(("workspaceFolderBasename" . projectile-project-basename)
-    ("workspaceFolder" . projectile-project-root)
-    ("relativeFileDirname" . projectile-relative-dirame)
-    ("relativeFile" . projectile-relative-file)
-    ("fileBasenameNoExtension" . buffer-basename-sans-extension)
-    ("fileBasename" . buffer-basename)
-    ("fileDirname" . buffer-dirname)
-    ("fileExtname" . buffer-extension)
-    ("lineNumber" . buffer-current-line)
-    ("selectedText" . buffer-selected-text)
+  '(("workspaceFolderBasename" . dap--project-project-basename)
+    ("workspaceFolder" . lsp-workspace-root)
+    ("relativeFileDirname" . dap--project-relative-dirame)
+    ("relativeFile" . dap--project-relative-file)
+    ("fileBasenameNoExtension" . dap--buffer-basename-sans-extension)
+    ("fileBasename" . dap--buffer-basename)
+    ("fileDirname" . dap--buffer-dirname)
+    ("fileExtname" . dap--buffer-extension)
+    ("lineNumber" . dap--buffer-current-line)
+    ("selectedText" . dap--buffer-selected-text)
     ("file" . buffer-file-name)
     ("env:\\(.*\\)" . dap--launch-json-getenv)
     ;; technically not in VSCode, but I still wanted to add a way to escape $
@@ -175,21 +173,26 @@ capture groups in REGEX.")
                    (cdr var-pair)
                    (if (= (length (match-data)) 2) ;; no capture groups
                        nil
-                     var))
+                     var
+                     (message "wow capture groups")))
                   (dap--warn-var-nil var)
                   "")))))
     nil))
 
 (defun dap-expand-variables-in-string (s)
-  (with-temp-buffer
-    (insert s)
-    (goto-char (point-min))
+  (let ((old-buffer (current-buffer)))
+    (with-temp-buffer
+      (insert s)
+      (goto-char (point-min))
 
-    (save-match-data
-      (while (re-search-forward "${\\([^}]*\\)}" nil t)
-        (replace-match (dap-expand-variable (match-string 1)))))
+      (save-match-data
+        (while (re-search-forward "${\\([^}]*\\)}" nil t)
+          (let ((var (match-string 1)))
+            (replace-match
+             (with-current-buffer old-buffer
+               (dap-expand-variable var))))))
 
-    (buffer-string)))
+      (buffer-string))))
 
 (defun dap--launch-json-expand-vars (conf)
   (cond ((listp conf)
@@ -200,7 +203,7 @@ capture groups in REGEX.")
 
 (defun dap--launch-json-prompt-configuration ()
   (dap--completing-read "Select configuration: "
-                        (dap--projectile-parse-launch-json)
+                        (dap--project-parse-launch-json)
                         #'dap--configuration-get-name))
 
 (defun dap-debug-launch-json ()
