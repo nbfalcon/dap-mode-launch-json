@@ -111,7 +111,7 @@ If no text is selected, return the empty string."
   (let ((envvar (match-string 1 var)))
     (or (getenv envvar) (dap--warn-unknown-envvar envvar) "")))
 
-(defvar dap--launch-json-variables
+(defvar dap-launch-json-variables
   ;; list taken from https://code.visualstudio.com/docs/editor/variables-reference
   '(("workspaceFolderBasename" . projectile-project-basename)
     ("workspaceFolder" . projectile-project-root)
@@ -167,7 +167,7 @@ capture groups in REGEX.")
 (defun dap-expand-variable (var)
   (catch 'ret
     (save-match-data
-      (dolist (var-pair dap--launch-json-variables)
+      (dolist (var-pair dap-launch-json-variables)
         (when (string-match (car var-pair) var)
           (throw 'ret
                  (or
