@@ -4,6 +4,8 @@ they are common in VSCode.
 
 Hopefully this plugin will get integrated into mainline dap-mode soon.
 
+Update: this plugin was merged into dap-mode master.
+
 # Features
 - Support for multiple launch configurations
 - Supports most of [VSCode's
